@@ -1,77 +1,116 @@
-# 急性胆囊炎风险计算器 - Streamlit永久云端版
-# 基于你原有Flask代码1:1改造，计算逻辑完全不变
 import streamlit as st
+import pandas as pd
+import numpy as np
+import joblib
 
-
-# ====================== 【你的原始计算公式，完全没改】 ======================
-def predict_cholecystitis(age, gender, bmi, nlr, tg, hdl):
-    weights = {
-        "age": age * 0.02,
-        "gender": 5 if gender == 1 else 0,
-        "bmi": bmi * 0.8,
-        "nlr": nlr * 3,
-        "tg": tg * 4,
-        "hdl": hdl * (-5)
-    }
-    base_risk = 10
-    total_risk = base_risk + sum(weights.values())
-    total_risk = max(5, min(95, round(total_risk, 1)))
-
-    if total_risk < 30:
-        risk_level = "低风险"
-        suggestion = "建议门诊随访，定期复查相关指标"
-    elif total_risk < 70:
-        risk_level = "中风险"
-        suggestion = "建议尽快就医完善检查，必要时住院观察"
-    else:
-        risk_level = "高风险"
-        suggestion = "立即急诊就诊，高度怀疑急性胆囊炎风险"
-    return total_risk, risk_level, suggestion
-
-
-# ====================== 页面UI（手机友好） ======================
+# ===================== 页面基础配置 =====================
 st.set_page_config(
-    page_title="急性胆囊炎风险计算器",
+    page_title="急性胆囊炎风险识别计算器",
     page_icon="🏥",
-    layout="centered"  # 手机适配最佳
+    layout="centered"
 )
 
-# 标题
-st.title("🏥 急性胆囊炎风险计算器")
-st.markdown("---")
+st.title("胆囊结石患者急性胆囊炎风险识别计算器")
+st.markdown("本计算器基于XGB机器学习模型，用于评估胆囊结石患者发生急性胆囊炎的风险。")
+st.divider()
 
-# 输入表单
-with st.form("calc_form"):
-    st.subheader("请输入临床指标")
-    age = st.number_input("年龄(岁)", min_value=1, max_value=120, value=50)
-    gender = st.radio("性别", options=[1, 0], format_func=lambda x: "男" if x == 1 else "女", horizontal=True)
+
+# ===================== 加载模型（缓存加速） =====================
+@st.cache_resource
+def load_model_bundle():
+    bundle = joblib.load("final_model_bundle.joblib")
+    return bundle
+
+
+bundle = load_model_bundle()
+model = bundle["best_model"]
+calibrator = bundle["calibrator"]
+features = bundle["features"]
+winsor_bounds = bundle["winsor_bounds"]
+
+# 验证集确定的风险分层阈值（固定值，不随测试集变动）
+LOW_RISK_THRESHOLD = 0.125  # < 12.5% → 低风险
+HIGH_RISK_THRESHOLD = 0.155  # ≥ 15.5% → 高风险
+
+# ===================== 输入区 =====================
+st.subheader("患者基础信息")
+
+age = st.number_input("年龄（岁）", min_value=18, max_value=100, value=60)
+sex_text = st.selectbox("性别", ["女", "男"])
+sex = 1 if sex_text == "男" else 0
+
+# 身高体重双列布局 → 自动计算BMI
+col_h, col_w = st.columns(2)
+with col_h:
+    height = st.number_input("身高（cm）", min_value=100.0, max_value=250.0, value=165.0, step=0.1)
+with col_w:
+    weight = st.number_input("体重（kg）", min_value=30.0, max_value=200.0, value=60.0, step=0.1)
+
+# 实时自动计算并显示BMI
+bmi = weight / ((height / 100) ** 2)
+st.info(f"✅ 自动计算 BMI：{bmi:.1f} kg/m²")
+
+st.divider()
+st.subheader("实验室检查指标")
+
+ast = st.number_input("AST（U/L）", min_value=0.0, max_value=1000.0, value=30.0, step=0.1)
+alt = st.number_input("ALT（U/L）", min_value=0.0, max_value=1000.0, value=30.0, step=0.1)
+ggt = st.number_input("GGT（U/L）", min_value=0.0, max_value=2000.0, value=50.0, step=0.1)
+tb = st.number_input("总胆红素（μmol/L）", min_value=0.0, max_value=1000.0, value=20.0, step=0.1)
+hgb = st.number_input("HGB（g/L）", min_value=30.0, max_value=250.0, value=130.0, step=0.1)
+
+# ===================== 计算按钮 + 预测逻辑 =====================
+if st.button("🧮 计算风险", type="primary", use_container_width=True):
+    # 构造输入数据，列名必须与模型训练时的特征名完全一致
+    input_df = pd.DataFrame([{
+        "年龄": age,
+        "性别": sex,
+        "BMI": bmi,
+        "AST (天门冬氨酸氨基转移酶)U/L": ast,
+        "ALT (丙氨酸氨基酸转移酶) U/L": alt,
+        "GGT (r-谷氨酰转肽酶)U/L": ggt,
+        "TB(总胆红素)μmol/L": tb,
+        "HGB (血红蛋白)g/L": hgb
+    }])
+
+    # 按模型特征顺序对齐
+    input_df = input_df[features]
+
+    # 执行缩尾处理（和训练集保持一致）
+    for col, bounds in winsor_bounds.items():
+        if col in input_df.columns:
+            lower, upper = bounds
+            input_df[col] = input_df[col].clip(lower, upper)
+
+    # 模型预测 + 概率校准
+    raw_prob = model.predict_proba(input_df)[:, 1]
+    calibrated_prob = calibrator.predict(raw_prob)[0]
+    prob_percent = calibrated_prob * 100
+
+    # 风险分层
+    if calibrated_prob < LOW_RISK_THRESHOLD:
+        risk_level = "低风险"
+        explanation = "该患者根据模型预测属于低风险人群，发生急性胆囊炎的风险较低，建议常规随访观察。"
+    elif calibrated_prob < HIGH_RISK_THRESHOLD:
+        risk_level = "中风险"
+        explanation = "该患者根据模型预测属于中风险人群，存在一定急性胆囊炎风险，建议结合临床症状、体征及影像学检查进一步评估。"
+    else:
+        risk_level = "高风险"
+        explanation = "该患者根据模型预测属于高风险人群，发生急性胆囊炎的可能性较高，建议重点关注，结合临床综合判断，必要时及时干预。"
+
+    # ===================== 输出区 =====================
+    st.divider()
+    st.subheader("📊 预测结果")
 
     col1, col2 = st.columns(2)
     with col1:
-        height = st.number_input("身高(cm)", min_value=50.0, max_value=250.0, value=165.0)
+        st.metric("预测风险", f"{prob_percent:.1f}%")
     with col2:
-        weight = st.number_input("体重(kg)", min_value=10.0, max_value=200.0, value=65.0)
+        st.metric("风险分层", risk_level)
 
-    nlr = st.number_input("NLR 中性粒细胞比值", min_value=0.1, max_value=50.0, value=2.0, step=0.1)
-    tg = st.number_input("甘油三酯 TG (mmol/L)", min_value=0.1, max_value=20.0, value=1.5, step=0.1)
-    hdl = st.number_input("高密度脂蛋白 HDL-C (mmol/L)", min_value=0.1, max_value=5.0, value=1.2, step=0.1)
+    # ===================== 解释区 =====================
+    st.success(explanation)
 
-    # 计算按钮
-    submit = st.form_submit_button("🧮 计算患病概率", type="primary")
-
-# 自动计算BMI
-bmi = weight / ((height / 100) ** 2)
-st.info(f"📊 自动计算 BMI：{bmi:.1f}")
-
-# 计算结果
-if submit:
-    prob, level, advice = predict_cholecystitis(age, gender, bmi, nlr, tg, hdl)
-
-    st.markdown("---")
-    st.subheader("📋 评估结果")
-    st.metric("急性胆囊炎患病概率", f"{prob} %")
-    st.success(f"风险等级：{level}")
-    st.warning(f"诊疗建议：{advice}")
-
-st.markdown("---")
-st.caption("✅ 本工具永久在线，无需开机运行代码")
+# 底部免责声明
+st.divider()
+st.caption("⚠️ 本工具仅用于科研展示与风险辅助识别，不能替代专业临床诊断。")
