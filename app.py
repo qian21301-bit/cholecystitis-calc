@@ -53,11 +53,11 @@ st.info(f"✅ 自动计算 BMI：{bmi:.1f} kg/m²")
 st.divider()
 st.subheader("实验室检查指标")
 
-ast = st.number_input("AST（U/L）", min_value=0.0, max_value=1000.0, value=30.0, step=0.1)
-alt = st.number_input("ALT（U/L）", min_value=0.0, max_value=1000.0, value=30.0, step=0.1)
-ggt = st.number_input("GGT（U/L）", min_value=0.0, max_value=2000.0, value=50.0, step=0.1)
-tb = st.number_input("总胆红素（μmol/L）", min_value=0.0, max_value=1000.0, value=20.0, step=0.1)
-hgb = st.number_input("HGB（g/L）", min_value=30.0, max_value=250.0, value=130.0, step=0.1)
+ast = st.number_input("AST (天门冬氨酸氨基转移酶)（U/L）", min_value=0.0, max_value=1000.0, value=30.0, step=0.1)
+alt = st.number_input("ALT (丙氨酸氨基酸转移酶)（U/L）", min_value=0.0, max_value=1000.0, value=30.0, step=0.1)
+ggt = st.number_input("GGT (r-谷氨酰转肽酶)（U/L）", min_value=0.0, max_value=2000.0, value=50.0, step=0.1)
+tb = st.number_input("TB(总胆红素)（mol/L）", min_value=0.0, max_value=1000.0, value=20.0, step=0.1)
+hgb = st.number_input("HGB (血红蛋白)（g/L）", min_value=30.0, max_value=250.0, value=130.0, step=0.1)
 
 # ===================== 计算按钮 + 预测逻辑 =====================
 if st.button("🧮 计算风险", type="primary", use_container_width=True):
@@ -69,7 +69,7 @@ if st.button("🧮 计算风险", type="primary", use_container_width=True):
         "AST (天门冬氨酸氨基转移酶)U/L": ast,
         "ALT (丙氨酸氨基酸转移酶) U/L": alt,
         "GGT (r-谷氨酰转肽酶)U/L": ggt,
-        "TB(总胆红素)μmol/L": tb,
+        "TB(总胆红素)mol/L": tb,
         "HGB (血红蛋白)g/L": hgb
     }])
 
